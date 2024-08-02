@@ -4,6 +4,9 @@ import { Route, BrowserRouter as Router, Routes } from "react-router-dom";
 import Play from "./pages/Play";
 import Login from "./pages/Login";
 import { createTheme, ThemeProvider } from "@mui/material/styles";
+import Register from "./pages/Register";
+import Timer from "./hooks/useTimer";
+import PlaceBet from "./pages/PlaceBet";
 
 const myTheme = createTheme({
   palette: {
@@ -20,7 +23,7 @@ const myTheme = createTheme({
       styleOverrides: {
         root: {
           color: "#ffffff",
-          // margin: "10px 20px 0 0",
+          margin: "10px 20px 0 0",
           padding: "5px 20px",
           // width: "max-content",
           borderStyle: "none",
@@ -45,9 +48,11 @@ function App() {
       <ThemeProvider theme={myTheme}>
         <div className="App">
           <Routes>
-            <Route exact path="/" element={<Login />} />
+            <Route exact path="/" element={<PlaceBet />} />
             <Route exact path="/play" element={<Play />} />
-            {/* <Route exact path="/" element={<PlaceBet />} /> */}
+            <Route exact path="/register" element={<Register />} />
+            <Route exact path="/timer" element={<Timer />} />
+            <Route exact path="/login" element={<Login />} />
           </Routes>
         </div>
       </ThemeProvider>

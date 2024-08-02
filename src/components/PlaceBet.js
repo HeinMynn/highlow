@@ -3,12 +3,12 @@ import {
   Button,
   Container,
   FormControl,
-  InputAdornment,
-  TextField,
+  MenuItem,
+  Select,
 } from "@mui/material";
 import { doc, updateDoc } from "firebase/firestore";
 import React, { useState } from "react";
-import { db, logout } from "./Auth";
+import { db } from "./Auth";
 
 function PlaceBet(props) {
   const [bet, setBet] = useState(props.betMoney);
@@ -24,6 +24,7 @@ function PlaceBet(props) {
     if (props.balance > parseInt(bet)) {
       props.betStateChanger(bet);
       props.balanceStateChanger(props.balance - parseInt(bet));
+      props.gameStateChanger("entry");
       const balanceDocRef = doc(db, "users", id);
 
       try {
@@ -47,28 +48,17 @@ function PlaceBet(props) {
         )}
         <form onSubmit={handleSubmit}>
           <FormControl fullWidth sx={{ m: 1 }} variant="standard">
-            <TextField
-              required
-              id="standard-basic"
-              value={bet}
-              label="Bet Here"
-              type="number"
-              onChange={handleChange}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">$</InputAdornment>
-                ),
-                inputProps: { min: 1 },
-              }}
-            />
+            <Select value={bet} onChange={handleChange} label="Bet Here">
+              <MenuItem value={100}>$100</MenuItem>
+              <MenuItem value={1000}>$1,000</MenuItem>
+              <MenuItem value={10000}>$10,000</MenuItem>
+              <MenuItem value={100000}>$100,000</MenuItem>
+            </Select>
           </FormControl>
           <FormControl>
             <Button type="submit" name="Bet" variant="outlined">
               Play
             </Button>
-          </FormControl>
-          <FormControl>
-            <Button onClick={logout}>Sign Out</Button>
           </FormControl>
         </form>
       </Container>

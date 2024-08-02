@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import axios from "axios";
 import {
   FormControl,
   Button,
@@ -8,29 +9,20 @@ import {
   ToggleButton,
   Chip,
 } from "@mui/material";
-import {
-  updateDoc,
-  doc,
-  query,
-  collection,
-  where,
-  getDocs,
-} from "firebase/firestore";
+import { updateDoc, doc, onSnapshot } from "firebase/firestore";
 import { Box, Container } from "@mui/system";
 import { useLocation, useNavigate } from "react-router-dom";
 import { analytics } from "../components/Firebase";
+import { db } from "../components/Auth";
 import { logEvent } from "firebase/analytics";
 import Stats from "../components/Stats";
-import { Deck } from "../api";
-import { auth, db } from "../components/Auth";
-import { useAuthState } from "react-firebase-hooks/auth";
-import PlaceBet from "../components/PlaceBet";
+import useTimer from "../hooks/useTimer"; // Import the custom hook
 
 function Play(props) {
-  // const storageMoney = localStorage.getItem("balance");
-  const [user, loading] = useAuthState(auth);
+  const initialBalance = 10000; // Initial balance hardcoded as per requirement
+
   const [deck, setDeck] = useState(null);
-  const [shuffle, setShuffle] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [drawnCard, setDrawnCard] = useState([]);
   const [success, setSuccess] = useState(false);
   const [guess, setGuess] = useState(null);
@@ -39,69 +31,113 @@ function Play(props) {
 
   const navigate = useNavigate();
   const location = useLocation();
-  const [betMoney, setBetMoney] = useState(0);
-  const [current, setCurrent] = useState(0);
-  const [balance, setBalance] = useState([]);
-  const [id] = useState(location.state.id);
+  const [betMoney, setBetMoney] = useState(
+    location.state.betMoney || localStorage.getItem("betMoney")
+  );
+  const [current, setCurrent] = useState(
+    location.state.betMoney || localStorage.getItem("current")
+  );
+  const [balance, setBalance] = useState(
+    location.state.balance || localStorage.getItem("balance") || initialBalance
+  );
+  const [id, setId] = useState(location.state.id || localStorage.getItem("id"));
   const [errorMsg, setErrorMsg] = useState(false);
 
-  const fetchUserName = async () => {
-    try {
-      const q = query(collection(db, "users"), where("uid", "==", user?.uid));
-      const doc = await getDocs(q);
-      const data = doc.docs[0].data();
-      setBalance(data.balance);
-      console.log(doc);
-    } catch (err) {
-      console.error(err);
-      alert("An error occured while fetching user data");
-    }
-  };
+  // Use the custom hook
+  const { balance: timerBalance, time, isRunning } = useTimer(id);
+
+  useEffect(() => {
+    setBalance(timerBalance);
+  }, [timerBalance]);
 
   const balanceDocRef = doc(db, "users", id);
 
-  async function drawCard(deck_id) {
-    let cards = await Deck.draw_card(deck_id);
-    setDrawnCard([...drawnCard, cards]);
-    setShuffle(false);
-    setSuccess(true);
-    console.log(cards);
-  }
+  // Load state from local storage
   useEffect(() => {
-    setCurrent(betMoney);
-  }, [betMoney]);
+    const savedState = JSON.parse(localStorage.getItem("gameState"));
+    if (savedState) {
+      setDeck(savedState.deck);
+      setDrawnCard(savedState.drawnCard);
+      setSuccess(savedState.success);
+      setGuess(savedState.guess);
+      setPoints(savedState.points);
+      setGameStatus(savedState.gameStatus);
+      setCurrent(savedState.current);
+      setBalance(savedState.balance);
+      setId(savedState.id);
+      setBetMoney(savedState.betMoney);
+    }
+  }, []);
+
+  // Sync Firestore balance with local state
+  useEffect(() => {
+    const unsubscribe = onSnapshot(balanceDocRef, (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        setBalance(data.balance);
+      }
+    });
+    return () => unsubscribe();
+  }, [balanceDocRef]);
+
+  // Save state to local storage when it changes
+  useEffect(() => {
+    localStorage.setItem(
+      "gameState",
+      JSON.stringify({
+        deck,
+        drawnCard,
+        success,
+        guess,
+        points,
+        gameStatus,
+        current,
+        balance,
+        id,
+        betMoney,
+      })
+    );
+  }, [
+    deck,
+    drawnCard,
+    success,
+    guess,
+    points,
+    gameStatus,
+    current,
+    balance,
+    id,
+    betMoney,
+  ]);
+
+  const drawCard = async (deckId) => {
+    const { data } = await axios.get(
+      `https://deckofcardsapi.com/api/deck/${deckId}/draw/?count=2`
+    );
+    setLoading(false);
+    setSuccess(data.success);
+    setDrawnCard((prevDrawnCards) => [...prevDrawnCards, ...data.cards]);
+  };
 
   useEffect(() => {
-    if (loading) return;
-    if (!user) return navigate("/");
-    fetchUserName();
     if (gameStatus === "start") {
       logEvent(analytics, "start_game");
-      async function fetchDeck() {
-        let deck_id = await Deck.get_deck();
-        console.log(deck_id);
-        setDeck(deck_id);
-      }
-      fetchDeck();
+      axios
+        .get("https://deckofcardsapi.com/api/deck/new/shuffle/?deck_count=1")
+        .then((res) => {
+          setDeck(res.data.deck_id);
+          drawCard(res.data.deck_id);
+        });
     }
     //eslint-disable-next-line
-  }, [gameStatus, user, loading, balance]);
+  }, [gameStatus]);
 
-  //draw cards
-  useEffect(() => {
-    if (deck !== null) {
-      drawCard(deck);
-    }
-    //eslint-disable-next-line
-  }, [deck]);
-  console.log("bet", betMoney);
-  console.log("current", current);
   const handleChange = (e) => {
     setGuess(e.target.value);
   };
 
   const handleNext = async (e) => {
-    setShuffle(true);
+    setLoading(true);
     setSuccess(false);
     setDrawnCard([]);
     setGuess(null);
@@ -115,11 +151,11 @@ function Play(props) {
         } catch (err) {
           alert(err);
         }
-        localStorage.setItem("balance", parseInt(balance) - betMoney);
+        localStorage.setItem("balance", parseInt(balance) - parseInt(betMoney));
         setBalance(parseInt(balance) - parseInt(betMoney));
         setCurrent(betMoney);
       } else {
-        setShuffle("false");
+        setLoading("false");
         setGameStatus("over");
         setErrorMsg("true");
       }
@@ -129,6 +165,7 @@ function Play(props) {
     console.log(e.target.value);
     // drawCard(deck);
   };
+
   const handleClaim = async (e) => {
     var claim = e.target.value;
     if (claim === "claimhalf") {
@@ -159,43 +196,38 @@ function Play(props) {
 
   if (drawnCard.length > 0) {
     if (
-      drawnCard[0].cards[1].value === "KING" ||
-      drawnCard[0].cards[1].value === "QUEEN" ||
-      drawnCard[0].cards[1].value === "JACK"
+      drawnCard[1].value === "KING" ||
+      drawnCard[1].value === "QUEEN" ||
+      drawnCard[1].value === "JACK"
     ) {
-      drawnCard[0].cards[1].value = 10;
-    } else if (drawnCard[0].cards[1].value === "ACE") {
-      drawnCard[0].cards[1].value = 11;
+      drawnCard[1].value = 10;
+    } else if (drawnCard[1].value === "ACE") {
+      drawnCard[1].value = 11;
     }
 
     if (
-      drawnCard[0].cards[0].value === "KING" ||
-      drawnCard[0].cards[0].value === "QUEEN" ||
-      drawnCard[0].cards[0].value === "JACK"
+      drawnCard[0].value === "KING" ||
+      drawnCard[0].value === "QUEEN" ||
+      drawnCard[0].value === "JACK"
     ) {
-      drawnCard[0].cards[0].value = 10;
-    } else if (drawnCard[0].cards[0].value === "ACE") {
-      drawnCard[0].cards[0].value = 1;
+      drawnCard[0].value = 10;
+    } else if (drawnCard[0].value === "ACE") {
+      drawnCard[0].value = 11;
     }
   }
 
   function guessCheck(guessing) {
     if (
       (guessing === "High" &&
-        parseInt(drawnCard[0].cards[1].value) >
-          parseInt(drawnCard[0].cards[0].value)) ||
+        parseInt(drawnCard[1].value) > parseInt(drawnCard[0].value)) ||
       (guessing === "Low" &&
-        parseInt(drawnCard[0].cards[1].value) <
-          parseInt(drawnCard[0].cards[0].value))
+        parseInt(drawnCard[1].value) < parseInt(drawnCard[0].value))
     ) {
       setPoints(points + 1);
       setGameStatus("continue");
       setCurrent(parseInt(current) + (parseInt(current) / 100) * 20);
       logEvent(analytics, "goal_completion", { name: "claim_money" });
-    } else if (
-      parseInt(drawnCard[0].cards[1].value) ===
-      parseInt(drawnCard[0].cards[0].value)
-    ) {
+    } else if (parseInt(drawnCard[1].value) === parseInt(drawnCard[0].value)) {
       setPoints(points);
       setGameStatus("draw");
     } else {
@@ -204,25 +236,26 @@ function Play(props) {
       setCurrent(betMoney);
     }
   }
+
   return (
     <div>
       <Container maxWidth="sm" mt={3}>
         <Grid sx={{ display: "flex", justifyContent: "space-evenly", m: 1 }}>
           <Stats name="points" value={points} />
           <Stats name="betMoney" value={betMoney} />
-          <Stats name="balance" value={balance} />
           <Stats name="current" value={current} />
+          <Stats name="balance" value={balance} />
+          {/* Display Timer component visually */}
+          {isRunning && (
+            <Chip
+              label={`Next top-up in: ${Math.floor(time / 60)}:${
+                time % 60 < 10 ? `0${time % 60}` : time % 60
+              }`}
+              color="primary"
+            />
+          )}
           <Chip label="Modifier - 20%" color="primary" />
         </Grid>
-        {betMoney === 0 && (
-          <PlaceBet
-            id={id}
-            balance={balance}
-            betStateChanger={setBetMoney}
-            balanceStateChanger={setBalance}
-            betMoney={betMoney}
-          />
-        )}
         <Grid sx={{ display: "flex", justifyContent: "space-evenly", m: 1 }}>
           {deck && gameStatus === "over" && !errorMsg && (
             <Alert severity="error">
@@ -249,7 +282,7 @@ function Play(props) {
 
         <Container>
           <Grid container spacing={2}>
-            {shuffle ? (
+            {loading ? (
               <Grid item xs={12} justifyContent="center" alignitems="center">
                 Shuffling
               </Grid>
@@ -258,11 +291,11 @@ function Play(props) {
             )}
             <Grid item xs={6}>
               <p>Dealer's Card:</p>
-              {success && drawnCard[0].cards.length > 0 ? (
+              {success && drawnCard.length > 0 ? (
                 <Box
                   component="img"
                   alt="dealer card"
-                  src={drawnCard[0].cards[0].image}
+                  // src={drawnCard[0].image}
                   sx={{ width: 1 }}
                 />
               ) : (
@@ -271,25 +304,21 @@ function Play(props) {
             </Grid>
             <Grid item xs={6}>
               <p>Your Card:</p>
-              {success &&
-              gameStatus !== "start" &&
-              drawnCard[0].cards.length > 0 ? (
+              {success && gameStatus !== "start" && drawnCard.length > 0 ? (
                 <Box
                   component="img"
                   alt="guess card"
-                  src={drawnCard[0].cards[1].image}
+                  // src={drawnCard[1].image}
                   sx={{ width: 1 }}
                 />
               ) : (
                 ""
               )}
-              {success &&
-              gameStatus === "start" &&
-              drawnCard[0].cards.length > 0 ? (
+              {success && gameStatus === "start" && drawnCard.length > 0 ? (
                 <Box
                   component="img"
                   alt="guess card"
-                  src="back.jpg"
+                  // src="back.jpg"
                   sx={{ width: 1 }}
                 />
               ) : (
@@ -299,7 +328,7 @@ function Play(props) {
           </Grid>
         </Container>
         <Container alignitems="center">
-          {gameStatus === "start" && betMoney > 0 ? (
+          {gameStatus === "start" ? (
             <form onSubmit={handleGuess}>
               <Grid container spacing={2}>
                 <Grid item xs={12}>
